@@ -1,0 +1,50 @@
+# MinIO Community edition — standalone demo values for a kind cluster.
+# Chart: https://charts.min.io/ (chart "minio/minio"), open source (AGPLv3).
+#
+# !!! DEMO PLACEHOLDERS ONLY !!!
+# rootUser / rootPassword below are the well-known public demo defaults
+# for a throwaway local cluster. They are NOT real credentials and must
+# never be used for anything reachable by anyone else.
+
+mode: standalone
+replicas: 1
+
+rootUser: "minioadmin"     # DEMO PLACEHOLDER — not a real secret
+rootPassword: "minioadmin" # DEMO PLACEHOLDER — not a real secret
+
+persistence:
+  enabled: true
+  size: 2Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Hardening (demo cluster): non-root, no privilege escalation, drop all
+# capabilities, read-only root filesystem (MinIO writes only to its
+# mounted /data volume and /tmp).
+securityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+
+consoleService:
+  type: ClusterIP
