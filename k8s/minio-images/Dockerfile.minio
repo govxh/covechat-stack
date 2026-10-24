@@ -1,0 +1,20 @@
+# MinIO Community server image, built inside the workflow run.
+# WHY (proven 2026-10-24, not guessed): the official image cannot be
+# pulled anonymously from any registry right now:
+#   - quay.io/minio/minio: 401/503 for EVERY tag, including latest
+#     (anonymous pulls of the minio repos are refused)
+#   - docker.io/minio/minio: repository DELETED ("object not found")
+# So the workflow builds this image from MinIO's OFFICIAL GitHub release
+# binary (same version the chart defaults to) plus MinIO's own
+# docker-entrypoint.sh (Apache-2.0, from MinIO's public repo, same tag),
+# then loads it into kind. values-minio.yaml pins pullPolicy: Never,
+# so no pod ever tries a registry pull. No new accounts, no secrets.
+FROM mirror.gcr.io/library/alpine:3.21
+COPY minio /usr/local/bin/minio
+COPY docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/minio /usr/bin/docker-entrypoint.sh \
+  && mkdir -p /etc/minio/certs /export \
+  && chown 1000:1000 /etc/minio/certs /export
+USER 1000:1000
+EXPOSE 9000 9001
+ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
