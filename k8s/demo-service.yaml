@@ -109,6 +109,15 @@ spec:
             # writable emptyDir. Without this, nginx exits at startup.
             - name: nginx-log
               mountPath: /var/log/nginx
+            # Run #14 lesson (exact emerg line from the pod logs):
+            # `open() "/run/nginx.pid" failed (30: Read-only file
+            # system)` — this image's MAIN nginx.conf puts the pid file
+            # at /run/nginx.pid, NOT under /var/log/nginx. So /run itself
+            # must be a writable emptyDir, or nginx dies at startup even
+            # with the log dir fixed. The image's /run is otherwise
+            # empty; nothing else in the container needs its contents.
+            - name: nginx-run
+              mountPath: /run
       volumes:
         - name: nginx-conf
           configMap:
@@ -118,6 +127,8 @@ spec:
         - name: nginx-cache
           emptyDir: {}
         - name: nginx-log
+          emptyDir: {}
+        - name: nginx-run
           emptyDir: {}
 ---
 apiVersion: v1
