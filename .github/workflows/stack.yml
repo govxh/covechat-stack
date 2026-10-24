@@ -37,6 +37,37 @@ jobs:
           kubectl cluster-info
           kubectl get nodes -o wide
 
+      # 2026-10-24: official MinIO images cannot be pulled anonymously
+      # anywhere (quay.io: 401/503 for every tag; docker.io/minio/minio:
+      # repository deleted). Build both images here from MinIO's official
+      # GitHub release binaries (same versions as the chart defaults,
+      # sha256-verified) and load them into kind. values-minio.yaml pins
+      # pullPolicy: Never for both, so pods never touch a registry.
+      # No new accounts, no secrets. This step must stay BEFORE the
+      # MinIO helm install step.
+      - name: Build MinIO images locally (quay.io + Docker Hub unusable)
+        run: |
+          set -euo pipefail
+          cd k8s/minio-images
+          curl -sSfLO "https://github.com/minio/minio/releases/download/RELEASE.2024-12-18T13-15-44Z/minio.linux-amd64.RELEASE.2024-12-18T13-15-44Z"
+          curl -sSfLO "https://github.com/minio/minio/releases/download/RELEASE.2024-12-18T13-15-44Z/minio.linux-amd64.RELEASE.2024-12-18T13-15-44Z.sha256sum"
+          curl -sSfLO "https://github.com/minio/mc/releases/download/RELEASE.2024-11-21T17-21-54Z/mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z"
+          curl -sSfLO "https://github.com/minio/mc/releases/download/RELEASE.2024-11-21T17-21-54Z/mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z.sha256sum"
+          sha256sum -c minio.linux-amd64.RELEASE.2024-12-18T13-15-44Z.sha256sum
+          sha256sum -c mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z.sha256sum
+          mv minio.linux-amd64.RELEASE.2024-12-18T13-15-44Z minio
+          mv mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z mc
+          docker build -f Dockerfile.minio -t local/minio:demo .
+          docker build -f Dockerfile.mc -t local/mc:demo .
+          if ! command -v kind >/dev/null 2>&1; then
+            echo "kind not on PATH, installing it"
+            curl -sSfLO "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64"
+            chmod +x kind-linux-amd64
+            sudo mv kind-linux-amd64 /usr/local/bin/kind
+          fi
+          kind load docker-image local/minio:demo local/mc:demo --name stack
+          docker images | grep -E "local/(minio|mc)"
+
       - name: Add Helm repos (all open source)
         run: |
           helm repo add minio https://charts.min.io/
