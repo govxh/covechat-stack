@@ -15,7 +15,11 @@ metadata:
   namespace: demo
 data:
   default.conf: |
-    pid /tmp/nginx.pid;
+    # NOTE (run #12 lesson): NO `pid` line here — pid is only valid in
+    # nginx's MAIN context, not inside a server block; putting it here
+    # makes nginx fail its config test ("pid directive is not allowed
+    # here") and the container never starts (0/2 replicas available).
+    # The image's main nginx.conf already sets the pid path.
     server {
       listen 8080;
       location / {
@@ -99,6 +103,12 @@ spec:
               mountPath: /tmp
             - name: nginx-cache
               mountPath: /var/cache/nginx
+            # Run #12 lesson: with readOnlyRootFilesystem + non-root uid
+            # 101, nginx cannot write its error log / pid file under
+            # /var/log/nginx (root-owned in the image) unless it is a
+            # writable emptyDir. Without this, nginx exits at startup.
+            - name: nginx-log
+              mountPath: /var/log/nginx
       volumes:
         - name: nginx-conf
           configMap:
@@ -106,6 +116,8 @@ spec:
         - name: tmp
           emptyDir: {}
         - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-log
           emptyDir: {}
 ---
 apiVersion: v1
