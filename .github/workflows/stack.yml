@@ -51,6 +51,28 @@ jobs:
             --values k8s/values-minio.yaml \
             --wait --timeout 10m
 
+      # Diagnostic run: if the MinIO install fails, capture WHY before
+      # the cluster is torn down. This step runs ONLY on failure, so a
+      # green run is unaffected. No blind reruns without these logs.
+      - name: DIAGNOSTICS — MinIO failure dump (failure only)
+        if: failure()
+        run: |
+          echo "===== pods all namespaces ====="
+          kubectl get pods -A -o wide || true
+          echo "===== storage: describe deployment ====="
+          kubectl describe deployment minio -n storage || true
+          echo "===== storage: describe pods ====="
+          kubectl describe pods -n storage || true
+          echo "===== storage: events (oldest to newest) ====="
+          kubectl get events -n storage --sort-by=.lastTimestamp || true
+          echo "===== storage: PVCs ====="
+          kubectl get pvc -n storage -o wide || true
+          echo "===== minio pod logs (current + previous) ====="
+          kubectl logs -n storage -l app=minio --tail=200 || true
+          kubectl logs -n storage -l app=minio --tail=200 --previous || true
+          echo "===== helm status ====="
+          helm status minio -n storage || true
+
       - name: Install kube-prometheus-stack (Prometheus + Grafana OSS)
         run: |
           kubectl create namespace monitoring
