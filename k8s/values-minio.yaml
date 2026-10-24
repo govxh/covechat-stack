@@ -6,6 +6,17 @@
 # for a throwaway local cluster. They are NOT real credentials and must
 # never be used for anything reachable by anyone else.
 
+# FIX 2026-10-24 (diagnostic run proof): the chart's default image
+# quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z could NOT be pulled
+# on GitHub runners — quay.io returned 503 Service Unavailable and 401
+# UNAUTHORIZED on its anonymous token endpoint (pod stuck ImagePullBackOff,
+# cluster/scheduling/storage all healthy). Same image on Docker Hub avoids
+# quay.io entirely. No other change.
+image:
+  repository: "minio/minio"
+  tag: "RELEASE.2024-12-18T13-15-44Z"
+  pullPolicy: IfNotPresent
+
 mode: standalone
 replicas: 1
 
@@ -25,8 +36,9 @@ resources:
     memory: 512Mi
 
 # Hardening (demo cluster): non-root, no privilege escalation, drop all
-# capabilities, read-only root filesystem (MinIO writes only to its
-# mounted /data volume and /tmp).
+# capabilities. NOTE: readOnlyRootFilesystem stays FALSE (the chart's own
+# default) — chart 5.4.0 mounts /tmp/credentials read-only and no writable
+# /tmp, so true stalls MinIO startup (run 3: deployment never became ready).
 securityContext:
   runAsUser: 1000
   runAsGroup: 1000
@@ -36,7 +48,7 @@ securityContext:
 
 containerSecurityContext:
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
+  readOnlyRootFilesystem: false
   runAsUser: 1000
   runAsGroup: 1000
   runAsNonRoot: true
