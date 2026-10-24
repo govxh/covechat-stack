@@ -112,6 +112,10 @@ jobs:
           echo "===== minio pod logs (current + previous) ====="
           kubectl logs -n storage -l app=minio --tail=200 || true
           kubectl logs -n storage -l app=minio --tail=200 --previous || true
+          echo "===== post-install job (mc) logs — run #8 lesson: the server can be healthy while this job fails ====="
+          kubectl describe job minio-post-job -n storage || true
+          kubectl logs -n storage -l app=minio-job --tail=200 || true
+          kubectl logs -n storage job/minio-post-job --tail=200 || true
           echo "===== helm status ====="
           helm status minio -n storage || true
 
