@@ -12,13 +12,19 @@ grafana:
     enabled: false
   service:
     type: ClusterIP
+  # FIX 2026-10-24 (run #11 diagnostics proof): Grafana 13.2.4 was
+  # OOMKilled (exit 137, CrashLoopBackOff x6) under the old 256Mi limit
+  # — it starts, migrates DB, loads 51 plugins, then the kernel kills it
+  # (GOMEMLIMIT was 230MiB). Sidecars, image pull, scheduling and
+  # Prometheus were all fine. 512Mi gives startup headroom; the chart
+  # recomputes GOMEMLIMIT from the limit automatically.
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 300m
       memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 prometheus:
   prometheusSpec:
