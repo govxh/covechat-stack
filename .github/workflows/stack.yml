@@ -53,8 +53,19 @@ jobs:
           curl -sSfLO "https://github.com/minio/minio/releases/download/RELEASE.2024-12-18T13-15-44Z/minio.linux-amd64.RELEASE.2024-12-18T13-15-44Z.sha256sum"
           curl -sSfLO "https://github.com/minio/mc/releases/download/RELEASE.2024-11-21T17-21-54Z/mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z"
           curl -sSfLO "https://github.com/minio/mc/releases/download/RELEASE.2024-11-21T17-21-54Z/mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z.sha256sum"
-          sha256sum -c minio.linux-amd64.RELEASE.2024-12-18T13-15-44Z.sha256sum
-          sha256sum -c mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z.sha256sum
+          # NOTE (run #7 lesson): MinIO's .sha256sum files list the binary
+          # under a SHORT name (minio.RELEASE... / mc.RELEASE...), not the
+          # downloaded linux-amd64 filename — so plain `sha256sum -c`
+          # fails with "No such file". Compare hashes directly instead;
+          # this works whatever filename the checksum file lists.
+          EXPECTED_MINIO=$(awk '{print $1}' minio.linux-amd64.RELEASE.2024-12-18T13-15-44Z.sha256sum)
+          ACTUAL_MINIO=$(sha256sum minio.linux-amd64.RELEASE.2024-12-18T13-15-44Z | awk '{print $1}')
+          [ "$EXPECTED_MINIO" = "$ACTUAL_MINIO" ] || { echo "minio sha256 MISMATCH"; exit 1; }
+          echo "minio sha256 OK"
+          EXPECTED_MC=$(awk '{print $1}' mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z.sha256sum)
+          ACTUAL_MC=$(sha256sum mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z | awk '{print $1}')
+          [ "$EXPECTED_MC" = "$ACTUAL_MC" ] || { echo "mc sha256 MISMATCH"; exit 1; }
+          echo "mc sha256 OK"
           mv minio.linux-amd64.RELEASE.2024-12-18T13-15-44Z minio
           mv mc.linux-amd64.RELEASE.2024-11-21T17-21-54Z mc
           docker build -f Dockerfile.minio -t local/minio:demo .
