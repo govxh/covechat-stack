@@ -1,0 +1,52 @@
+# kube-prometheus-stack — Prometheus + Grafana OSS, small demo sizing.
+# Chart: https://prometheus-community.github.io/helm-charts
+# (chart "prometheus-community/kube-prometheus-stack"), open source.
+#
+# !!! DEMO PLACEHOLDER ONLY !!!
+# grafana.adminPassword below is a throwaway demo password for a local
+# kind cluster that is deleted after the run. It is NOT a real credential.
+
+grafana:
+  adminPassword: "admin" # DEMO PLACEHOLDER — not a real secret
+  persistence:
+    enabled: false
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+prometheus:
+  prometheusSpec:
+    retention: 1d
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+
+# Alertmanager is not needed for this proof; keep the footprint small.
+alertmanager:
+  enabled: false
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 128Mi

@@ -1,0 +1,140 @@
+name: stack
+
+# Phase 1 proof: spin up a throwaway kind cluster on the GitHub runner,
+# install the forever-free open-source stack with Helm, print proof,
+# then scan the deployed images and this repo with Trivy.
+# Nothing here touches any production system. Public repo = free minutes.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/stack.yml"
+      - "k8s/**"
+
+permissions:
+  contents: read
+
+jobs:
+  stack-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create kind cluster (3 nodes)
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: stack
+          config: k8s/kind-config.yaml
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Show cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes -o wide
+
+      - name: Add Helm repos (all open source)
+        run: |
+          helm repo add minio https://charts.min.io/
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Install MinIO Community (object storage)
+        run: |
+          kubectl create namespace storage
+          helm install minio minio/minio \
+            --namespace storage \
+            --values k8s/values-minio.yaml \
+            --wait --timeout 10m
+
+      - name: Install kube-prometheus-stack (Prometheus + Grafana OSS)
+        run: |
+          kubectl create namespace monitoring
+          helm install monitoring prometheus-community/kube-prometheus-stack \
+            --namespace monitoring \
+            --values k8s/values-monitoring.yaml \
+            --wait --timeout 20m
+
+      - name: Proof — pods and services in all namespaces
+        run: |
+          kubectl get pods -A -o wide
+          echo "----- services -----"
+          kubectl get svc -A
+
+      - name: Collect deployed container images
+        run: |
+          kubectl get pods -A \
+            -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' \
+            | sort -u | tee images.txt
+          echo "----- images to scan -----"
+          cat images.txt
+
+      - name: Install Trivy CLI
+        run: |
+          TRIVY_VER="0.76.1"
+          curl -sSfLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VER}/trivy_${TRIVY_VER}_Linux-64bit.tar.gz"
+          tar -xzf "trivy_${TRIVY_VER}_Linux-64bit.tar.gz" trivy
+          sudo mv trivy /usr/local/bin/trivy
+          trivy --version
+
+      - name: Trivy config scan of this repo
+        run: trivy config --severity HIGH,CRITICAL --exit-code 0 .
+
+      - name: Render Helm charts and Trivy config scan the rendered manifests
+        run: |
+          mkdir -p rendered
+          helm template minio minio/minio \
+            --namespace storage \
+            --values k8s/values-minio.yaml > rendered/minio.yaml
+          helm template monitoring prometheus-community/kube-prometheus-stack \
+            --namespace monitoring \
+            --values k8s/values-monitoring.yaml > rendered/monitoring.yaml
+          trivy config --severity HIGH,CRITICAL --exit-code 0 rendered/
+
+      - name: Trivy image scan of deployed images (includes MinIO + Grafana)
+        run: |
+          while read -r img; do
+            [ -z "$img" ] && continue
+            echo "===== scanning $img ====="
+            trivy image --severity HIGH,CRITICAL --exit-code 0 "$img"
+          done < images.txt
+
+      # ----- Benchmark stage (migration gate evidence) -----
+      # Load goes ONLY against the generic demo service inside this
+      # throwaway cluster. Nothing external is touched.
+      - name: Install metrics-server (needed for HPA)
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+          kubectl patch deployment metrics-server -n kube-system --type=json \
+            -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+          kubectl wait --for=condition=available deployment/metrics-server \
+            -n kube-system --timeout=240s
+          kubectl top nodes || true
+
+      - name: Deploy generic demo service (+ HPA)
+        run: |
+          kubectl apply -f k8s/demo-service.yaml
+          kubectl rollout status deployment/demo -n demo --timeout=240s
+          kubectl get pods -n demo -o wide
+
+      - name: Run k6 load test inside the cluster (ramp to 1,000 VUs)
+        run: |
+          kubectl create configmap k6-load -n demo --from-file=load.js=k6/load.js
+          kubectl apply -f k6/k6-job.yaml
+          if kubectl wait --for=condition=complete job/k6-load -n demo --timeout=1200s; then
+            echo "K6_JOB_RESULT=complete"
+          else
+            echo "K6_JOB_RESULT=failed-or-timeout"
+          fi
+          echo "----- k6 output (requests, error rate, p50/p95/p99) -----"
+          kubectl logs job/k6-load -n demo
+          echo "----- HPA + pods after load -----"
+          kubectl get hpa -n demo
+          kubectl get pods -n demo -o wide
+          kubectl top pods -n demo || true
+          # Surface the gate honestly: a failed k6 job fails this step.
+          kubectl wait --for=condition=complete job/k6-load -n demo --timeout=5s

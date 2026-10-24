@@ -1,0 +1,58 @@
+# k6 load-test Job — runs inside the cluster, in the demo namespace.
+# The script itself is injected at runtime from k6/load.js via a
+# ConfigMap created by the workflow:
+#   kubectl create configmap k6-load -n demo --from-file=load.js=k6/load.js
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-load
+  namespace: demo
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1200
+  template:
+    metadata:
+      labels:
+        app: k6-load
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: k6
+          image: grafana/k6:0.54.0
+          args: ["run", "/scripts/load.js"]
+          env:
+            - name: DEMO_URL
+              value: "http://demo.demo.svc.cluster.local/"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: script
+          configMap:
+            name: k6-load
+        - name: tmp
+          emptyDir: {}
