@@ -6,16 +6,26 @@
 # for a throwaway local cluster. They are NOT real credentials and must
 # never be used for anything reachable by anyone else.
 
-# FIX 2026-10-24 (diagnostic run proof): the chart's default image
-# quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z could NOT be pulled
-# on GitHub runners — quay.io returned 503 Service Unavailable and 401
-# UNAUTHORIZED on its anonymous token endpoint (pod stuck ImagePullBackOff,
-# cluster/scheduling/storage all healthy). Same image on Docker Hub avoids
-# quay.io entirely. No other change.
+# FIX 2026-10-24 (diagnostic + registry proof, both runs):
+#  - quay.io/minio/minio AND quay.io/minio/mc refuse ALL anonymous pulls
+#    (tested every tag incl. latest with a valid anonymous token: 401,
+#    and 503 on the token endpoint) — NOT a missing-tag problem.
+#  - docker.io/minio/minio is DELETED ("object not found") — the Docker
+#    Hub switch failed with "repository does not exist".
+# So BOTH images are built inside the workflow run from MinIO's official
+# GitHub release binaries (same versions as the chart defaults) and
+# loaded into kind (see k8s/minio-images/ + the "Build MinIO images
+# locally" workflow step). pullPolicy: Never — pods never touch a
+# registry. No new accounts, no secrets.
 image:
-  repository: "minio/minio"
-  tag: "RELEASE.2024-12-18T13-15-44Z"
-  pullPolicy: IfNotPresent
+  repository: "local/minio"
+  tag: "demo"
+  pullPolicy: Never
+
+mcImage:
+  repository: "local/mc"
+  tag: "demo"
+  pullPolicy: Never
 
 mode: standalone
 replicas: 1
