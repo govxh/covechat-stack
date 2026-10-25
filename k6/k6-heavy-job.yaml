@@ -1,0 +1,60 @@
+# Heavy k6 load-test Job — runs inside the cluster, in the heavy namespace.
+# The script itself is injected at runtime from k6/heavy.js via a
+# ConfigMap created by the workflow:
+#   kubectl create configmap heavy-k6 -n heavy --from-file=heavy.js=k6/heavy.js
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-heavy
+  namespace: heavy
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1200
+  template:
+    metadata:
+      labels:
+        app: k6-heavy
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: k6
+          image: grafana/k6:0.54.0
+          args: ["run", "/scripts/heavy.js"]
+          env:
+            - name: HEAVY_WS
+              value: "ws://heavy-chat.heavy.svc.cluster.local:8080/chat"
+            - name: HEAVY_HTTP
+              value: "http://heavy-chat.heavy.svc.cluster.local:8080"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: script
+          configMap:
+            name: heavy-k6
+        - name: tmp
+          emptyDir: {}
