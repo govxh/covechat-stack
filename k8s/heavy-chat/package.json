@@ -1,0 +1,1 @@
+{"dependencies":{"minio":"^8.0.0","pg":"^8.13.0","ws":"^8.18.0"},"description":"Synthetic chat workload heavier than CoveChat, for stack capacity proof only. No real users, no real data.","license":"MIT","main":"server.js","name":"heavy-chat","private":true,"version":"1.0.0"}

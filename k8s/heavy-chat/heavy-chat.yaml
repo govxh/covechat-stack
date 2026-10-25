@@ -1,0 +1,200 @@
+# Heavy gate test stack — a chat-like workload deliberately heavier than
+# CoveChat's real usage. Everything here is synthetic and throwaway:
+# demo-only credentials, emptyDir storage (no persistence), no real app,
+# no real users, no real data. Runs in the same throwaway kind cluster
+# as the rest of the proof.
+#
+# Layout: 50 chat rooms x ~20 users each at 1,000 VUs. Per chat message
+# the server does a Postgres INSERT + history SELECT and broadcasts to
+# the whole room; attachments go to the stack's MinIO.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: heavy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: heavy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: "heavy"
+            - name: POSTGRES_PASSWORD
+              value: "heavy-demo-password"
+            - name: POSTGRES_DB
+              value: "heavy"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: heavy
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: heavy-chat
+  namespace: heavy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: heavy-chat
+  template:
+    metadata:
+      labels:
+        app: heavy-chat
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: heavy-chat
+          image: local/heavy-chat:demo
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PGHOST
+              value: "postgres.heavy.svc.cluster.local"
+            - name: PGUSER
+              value: "heavy"
+            - name: PGPASSWORD
+              value: "heavy-demo-password"
+            - name: PGDATABASE
+              value: "heavy"
+            - name: MINIO_HOST
+              value: "minio.storage.svc.cluster.local"
+            - name: MINIO_USER
+              value: "minioadmin"
+            - name: MINIO_PASS
+              value: "minioadmin"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: heavy-chat
+  namespace: heavy
+spec:
+  selector:
+    app: heavy-chat
+  ports:
+    - port: 8080
+---
+# Same HPA shape as the demo service (2-6 replicas at 60% CPU), so this
+# heavier load also gets a chance to prove scale-UP — the one behaviour
+# run #15 never exercised (demo CPU stayed at 20%).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: heavy-chat
+  namespace: heavy
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: heavy-chat
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
