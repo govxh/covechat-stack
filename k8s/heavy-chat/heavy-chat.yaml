@@ -32,7 +32,6 @@ spec:
         runAsNonRoot: true
         runAsUser: 70
         runAsGroup: 70
-        fsGroup: 70
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -47,13 +46,23 @@ spec:
               value: "heavy-demo-password"
             - name: POSTGRES_DB
               value: "heavy"
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql/data
-            - name: run
-              mountPath: /var/run/postgresql
-            - name: tmp
-              mountPath: /tmp
+          # Run #19 lesson (exact log): initdb failed with
+          # "could not change permissions of directory
+          # /var/lib/postgresql/data: Operation not permitted", and the
+          # /var/run/postgresql chmod failed the same way. Cause: the
+          # data/run dirs were emptyDir volumes owned by root, and a
+          # non-root user (uid 70) cannot chmod a directory it does not
+          # own — fsGroup only changes GROUP ownership, and ALL
+          # capabilities (incl. CAP_FOWNER) are dropped, so chmod can
+          # never succeed on those mounts. Fix: mount NOTHING over
+          # postgres's own directories and let it use the image's
+          # directories (owned by uid 70 in the image) in the writable
+          # container layer. Data is ephemeral here (throwaway test),
+          # so no persistence is lost. Accepted trade-off, stated
+          # plainly: this container runs with a writable root FS, so
+          # Trivy flags KSV-0014 HIGH for it; the workflow's scans run
+          # with --exit-code 0, so that finding is reported, not hidden,
+          # and does not fail the run.
           resources:
             requests:
               cpu: 500m
@@ -63,19 +72,12 @@ spec:
               memory: 2Gi
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
+            readOnlyRootFilesystem: false
             runAsNonRoot: true
             runAsUser: 70
             runAsGroup: 70
             capabilities:
               drop: ["ALL"]
-      volumes:
-        - name: data
-          emptyDir: {}
-        - name: run
-          emptyDir: {}
-        - name: tmp
-          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
