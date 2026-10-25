@@ -11,6 +11,7 @@ on:
     paths:
       - ".github/workflows/stack.yml"
       - "k8s/**"
+      - "k6/**"
 
 permissions:
   contents: read
@@ -207,10 +208,56 @@ jobs:
           # Surface the gate honestly: a failed k6 job fails this step.
           kubectl wait --for=condition=complete job/k6-load -n demo --timeout=5s
 
+      # ----- Heavy gate test (2026-10-25, user order) -----
+      # The demo benchmark proved the stack with a trivial static page.
+      # This stage proves it with a workload DELIBERATELY heavier than
+      # CoveChat's real usage on every axis: a real WebSocket chat server
+      # (Node.js) + Postgres + MinIO attachments, driven by 1,000 WS users
+      # sending 1 msg / 2s each with a 2 KB payload (500 msgs/sec, room
+      # fan-out, a DB write + history read per message) plus ~30 uploads
+      # /sec of 200 KB files. Real-use figures are estimates; the test is
+      # roughly 10-50x the real load. If THIS passes at 1,000 users, the
+      # claim "CoveChat's real load is light for this stack" is far
+      # stronger than the demo alone. Synthetic only — no real app, no
+      # real users, no real data, throwaway cluster.
+      - name: Build heavy-chat image (WebSocket + Postgres + MinIO)
+        run: |
+          docker build -t local/heavy-chat:demo k8s/heavy-chat
+          kind load docker-image local/heavy-chat:demo --name stack
+          docker images | grep "local/heavy-chat"
+
+      - name: Deploy heavy chat (+ Postgres + HPA)
+        run: |
+          kubectl apply -f k8s/heavy-chat/heavy-chat.yaml
+          kubectl rollout status deployment/postgres -n heavy --timeout=240s
+          kubectl rollout status deployment/heavy-chat -n heavy --timeout=240s
+          kubectl get pods -n heavy -o wide
+
+      - name: Run heavy k6 load test (1,000 WS users, heavier than CoveChat)
+        run: |
+          kubectl create configmap heavy-k6 -n heavy --from-file=heavy.js=k6/heavy.js
+          kubectl apply -f k6/k6-heavy-job.yaml
+          if kubectl wait --for=condition=complete job/k6-heavy -n heavy --timeout=1200s; then
+            echo "K6_HEAVY_RESULT=complete"
+          else
+            echo "K6_HEAVY_RESULT=failed-or-timeout"
+          fi
+          echo "----- heavy k6 output (WS latency, error rate, uploads) -----"
+          kubectl logs job/k6-heavy -n heavy
+          echo "----- HPA + pods after heavy load -----"
+          kubectl get hpa -n heavy
+          kubectl get pods -n heavy -o wide
+          kubectl top pods -n heavy || true
+          echo "----- heavy-chat server stats (server-side counters) -----"
+          kubectl run curl-stats --rm -i --image=curlimages/curl --restart=Never \
+            -- curl -s http://heavy-chat.heavy.svc.cluster.local:8080/stats || true
+          # Surface the gate honestly: a failed heavy k6 job fails this step.
+          kubectl wait --for=condition=complete job/k6-heavy -n heavy --timeout=5s
+
       # Run #12 lesson: a diagnostics step placed mid-job is SKIPPED for
       # failures that happen AFTER it (its if: failure() was already
       # false at that point). This FINAL dump sits at the end, so it
-      # runs on ANY earlier failure — MinIO, monitoring, demo, or k6 —
+      # runs on ANY earlier failure — MinIO, monitoring, demo, heavy, or k6 —
       # and leaves evidence before the cluster is torn down.
       - name: DIAGNOSTICS — final failure dump (failure only)
         if: failure()
@@ -233,6 +280,13 @@ jobs:
           kubectl logs -n demo -l app=demo --tail=200 || true
           kubectl logs -n demo -l app=demo --tail=200 --previous || true
           kubectl get events -n demo --sort-by=.lastTimestamp || true
+          echo "===== heavy: describe + logs + events ====="
+          kubectl describe deployments -n heavy || true
+          kubectl describe pods -n heavy || true
+          kubectl logs -n heavy -l app=heavy-chat --tail=200 || true
+          kubectl logs -n heavy -l app=heavy-chat --tail=200 --previous || true
+          kubectl logs -n heavy -l app=postgres --tail=200 || true
+          kubectl get events -n heavy --sort-by=.lastTimestamp || true
           echo "===== helm status ====="
           helm status minio -n storage || true
           helm status monitoring -n monitoring || true
